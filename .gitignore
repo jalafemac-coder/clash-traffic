@@ -1,0 +1,22 @@
+# Recorded traffic. This holds every host the machine contacted; it is
+# personal browsing history and must never leave the machine.
+traffic.db
+traffic.db-shm
+traffic.db-wal
+
+# Runtime state written by the collector
+collector.pid
+collector.stop
+
+# Generated output, rebuilt on demand from the database
+dashboard.html
+report-*.txt
+
+# Build artefacts
+ClashTraffic.exe
+build/
+dist/
+*.spec
+
+__pycache__/
+*.py[cod]

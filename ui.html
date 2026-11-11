@@ -1,0 +1,587 @@
+<!doctype html>
+<html lang="zh">
+<meta charset="utf-8">
+<title>Clash 流量监控</title>
+<style>
+:root{
+  color-scheme: light;
+  --plane:#f4f3f0; --surface:#fcfcfb; --ink:#0b0b0b; --ink2:#52514e; --muted:#898781;
+  --line:rgba(11,11,11,.08); --grid:#e5e4de;
+  --accent:#2a78d6; --accent-ink:#2a78d6; --good:#0ca30c; --danger:#d03b3b; --dim:#c3c2b7;
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100; --s5:#e87ba4;
+  --shadow:0 1px 2px rgba(11,11,11,.05), 0 10px 26px rgba(11,11,11,.07);
+  --hover:rgba(11,11,11,.05);
+  /* A dark surface gets no help from a drop shadow, so depth comes from a
+     highlight along the top edge, as if lit from above. The light theme uses
+     the same tokens so one rule serves both. */
+  --card:linear-gradient(#ffffff,#fbfbf9);
+  --bar:linear-gradient(#ffffff,#fafaf8);
+  --raise:inset 0 1px 0 rgba(255,255,255,.9);
+  --sunk-bg:#eceae6;
+  --sunken:inset 0 1px 3px rgba(11,11,11,.10);
+  --pill:linear-gradient(#ffffff,#f6f5f2);
+  --pill-ink:#0b0b0b;
+  --track:rgba(11,11,11,.08);
+  --glow:rgba(42,120,214,.26);
+  --strong:#0b0b0b;
+}
+html[data-theme="dark"]{
+  color-scheme: dark;
+  --plane:#0b0b0d; --surface:#17171a; --ink:#ffffff; --ink2:#c3c2b7; --muted:#898781;
+  --line:rgba(255,255,255,.09); --grid:#2c2c2a;
+  --accent:#3987e5; --accent-ink:#6da7ec; --good:#0ca30c; --danger:#e05252; --dim:#4a4a46;
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#d55181;
+  --shadow:0 1px 2px rgba(0,0,0,.5), 0 12px 28px rgba(0,0,0,.42);
+  --hover:rgba(255,255,255,.07);
+  --card:linear-gradient(#1b1b21,#161619);
+  --bar:linear-gradient(#1b1b20,#161619);
+  --raise:inset 0 1px 0 rgba(255,255,255,.055);
+  --sunk-bg:#08080a;
+  --sunken:inset 0 1px 3px rgba(0,0,0,.7);
+  --pill:linear-gradient(#2e2e36,#26262c);
+  --pill-ink:#ffffff;
+  --track:rgba(255,255,255,.06);
+  --glow:rgba(42,120,214,.30);
+  --strong:#ecebf0;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--plane); color:var(--ink); overflow:hidden;
+  font-family:"Microsoft YaHei UI","Segoe UI",system-ui,sans-serif;
+  display:flex; flex-direction:column;
+  -webkit-user-select:none; user-select:none; cursor:default;
+}
+
+/* title bar -------------------------------------------------------- */
+#bar{
+  height:40px; flex:none; display:flex; align-items:center; gap:9px; padding-left:14px;
+  background:var(--bar); border-bottom:1px solid var(--line);
+}
+#bar .ico{width:15px;height:15px;border-radius:4px;background:var(--accent);flex:none;
+  display:grid;place-items:center}
+#bar .t{font-size:12px;color:var(--ink2);flex:1}
+#bar .ctl{display:flex;height:100%}
+#bar button{
+  width:44px;height:100%;border:0;background:none;color:var(--ink2);cursor:default;
+  display:grid;place-items:center;font-family:inherit;
+}
+#bar button:hover{background:var(--hover)}
+#bar button.x:hover{background:#d03b3b;color:#fff}
+
+/* content ---------------------------------------------------------- */
+#body{flex:1;overflow-y:auto;overflow-x:hidden;padding:16px;display:flex;
+  flex-direction:column;gap:11px}
+#body::-webkit-scrollbar{width:9px}
+#body::-webkit-scrollbar-thumb{background:var(--grid);border-radius:5px;
+  border:3px solid var(--plane)}
+.card{background:var(--card);border-radius:16px;
+  box-shadow:var(--raise), var(--shadow)}
+
+.ranges{display:flex;background:var(--sunk-bg);border-radius:11px;padding:3px;
+  box-shadow:var(--sunken)}
+.ranges button{flex:1;border:0;background:none;border-radius:8px;padding:7px 0;
+  font-family:inherit;font-size:12px;font-weight:500;color:var(--muted);cursor:default;
+  letter-spacing:.01em;transition:background .12s,color .12s}
+.ranges button:hover:not([aria-pressed="true"]){color:var(--ink2)}
+.ranges button[aria-pressed="true"]{background:var(--pill);color:var(--pill-ink);
+  box-shadow:var(--raise), 0 1px 2px rgba(0,0,0,.28)}
+
+.delta{font-size:12.5px;font-weight:600;margin-left:10px;letter-spacing:0;
+  vertical-align:baseline;font-variant-numeric:tabular-nums}
+.delta.up{color:var(--danger)}
+.delta.down{color:var(--good)}
+.delta.flat{color:var(--muted);font-weight:500}
+.delta .vs{color:var(--muted);font-weight:400;font-size:11.5px;margin-left:5px}
+
+.hero{padding:18px 18px 0;overflow:hidden}
+.chip{display:inline-flex;align-items:center;gap:7px;font-size:11px;color:var(--ink2);
+  background:var(--sunk-bg);border-radius:999px;box-shadow:var(--sunken);
+  padding:4px 10px 4px 7px;vertical-align:middle}
+.chip .d{width:6px;height:6px;border-radius:50%;background:var(--dim);flex:none}
+.chip.on .d{background:var(--good);box-shadow:0 0 0 3px rgba(12,163,12,.22);
+  animation:pulse 2.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 3px rgba(12,163,12,.22)}
+                 50%{box-shadow:0 0 0 5px rgba(12,163,12,.10)}}
+.pid{float:right;font-size:10.5px;color:var(--muted);margin-top:5px;letter-spacing:.02em;
+  font-variant-numeric:tabular-nums}
+.val{font-size:54px;font-weight:600;letter-spacing:-.035em;line-height:1.05;margin-top:15px}
+.val small{font-size:16px;font-weight:500;color:var(--muted);margin-left:4px;letter-spacing:0}
+.cap{font-size:11px;color:var(--muted);margin-top:5px;letter-spacing:.015em}
+/* Bled to the card edges: the chart is the surface, not a box drawn on it. */
+#spark{display:block;width:calc(100% + 36px);height:76px;margin:8px -18px -1px}
+
+.tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}
+.tile{padding:12px 13px 11px}
+.tile .k{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;letter-spacing:.06em}
+.tile .v{font-size:17px;font-weight:600;margin-top:5px;letter-spacing:-.015em}
+
+#primary{border:0;width:100%;border-radius:13px;padding:14px;font-size:14.5px;font-weight:600;
+  font-family:inherit;letter-spacing:.16em;color:#fff;cursor:default;
+  background:linear-gradient(#4a93ec,#2a78d6);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.26), 0 1px 2px rgba(0,0,0,.35),
+             0 8px 22px var(--glow);
+  transition:filter .12s}
+#primary:hover:not(:disabled){filter:brightness(1.06)}
+#primary:disabled{opacity:.55;box-shadow:none}
+#primary.stop{background:linear-gradient(#e2645f,#cf3f3f);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.24), 0 1px 2px rgba(0,0,0,.35),
+             0 8px 22px rgba(208,59,59,.28)}
+
+.row{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}
+.ghost{border:0;background:var(--card);border-radius:11px;
+  padding:10px 0;font-family:inherit;font-size:12px;color:var(--ink2);cursor:default;
+  display:flex;align-items:center;justify-content:center;gap:6px;
+  box-shadow:var(--raise), 0 1px 2px rgba(0,0,0,.28)}
+.ghost:hover:not(:disabled){filter:brightness(1.12)}
+.ghost:disabled{opacity:.5}
+.ghost.active{color:var(--accent-ink);box-shadow:var(--raise), 0 0 0 1px var(--accent)}
+.ghost svg{width:13px;height:13px;flex:none;opacity:.78;fill:none;stroke:currentColor;
+  stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+#bar .ico svg{width:10px;height:10px}
+
+.list{padding:14px 16px 15px}
+.list h3{font-size:10px;font-weight:600;color:var(--muted);display:flex;align-items:center;
+  letter-spacing:.06em}
+.list h3 em{margin-left:auto;font-style:normal;font-weight:500;font-size:11px;
+  letter-spacing:0;font-variant-numeric:tabular-nums}
+.item{margin-top:13px}
+.item .top{display:flex;align-items:baseline;gap:7px;font-size:12px;color:var(--strong);
+  font-weight:500}
+.item .proc{flex:none;max-width:42%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.item .host{color:var(--muted);font-size:11px;font-weight:400;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.item .amt{margin-left:auto;flex:none;font-variant-numeric:tabular-nums;color:var(--ink2);
+  font-size:11.5px;font-weight:400}
+.track{height:4px;border-radius:2px;background:var(--track);margin-top:7px;overflow:hidden}
+.fill{height:100%;border-radius:2px;transition:width .35s ease}
+#pulse{display:none;width:100%;height:86px;margin:9px 0 0}
+#sortbar{display:none;gap:3px;margin:11px 0 1px;background:var(--sunk-bg);
+  border-radius:9px;padding:3px;box-shadow:var(--sunken)}
+body.live #sortbar{display:flex}
+#sortbar button{flex:1;border:0;background:none;border-radius:7px;padding:5px 0;
+  font-family:inherit;font-size:10.5px;font-weight:500;color:var(--muted);cursor:default;
+  letter-spacing:.02em}
+#sortbar button[aria-pressed="true"]{background:var(--pill);color:var(--pill-ink);
+  box-shadow:var(--raise), 0 1px 2px rgba(0,0,0,.28)}
+.item .dot{width:7px;height:7px;border-radius:50%;flex:none;display:block}
+body.live #pulse{display:block}
+/* In live mode the magnitude is carried by the pulse strip, so the per-row
+   bars would say the same thing twice. */
+body.live .track{display:none}
+body.live .item{margin-top:9px}
+.none{font-size:12px;color:var(--muted);padding:14px 0 6px;text-align:center}
+#note{font-size:11.5px;color:var(--muted);padding:0 2px;min-height:16px;
+  white-space:pre-wrap;word-break:break-all}
+</style>
+
+<div id="bar" class="pywebview-drag-region">
+  <div class="ico"><svg viewBox="0 0 16 16" fill="none" stroke="#fff"
+       stroke-width="2.1" stroke-linecap="round">
+       <path d="M7.3 13.3V9.9"/><path d="M7.3 9.9 11.5 4.7"/>
+       <path d="M7.3 9.9 3.8 7.3" stroke-opacity=".52"/></svg></div>
+  <div class="t">Clash 流量监控</div>
+  <div class="ctl">
+    <button id="min" title="最小化"><svg width="11" height="11" viewBox="0 0 11 11"><rect x="1" y="5" width="9" height="1" fill="currentColor"/></svg></button>
+    <button id="max" title="最大化"><svg width="11" height="11" viewBox="0 0 11 11"><rect x="1.5" y="1.5" width="8" height="8" fill="none" stroke="currentColor"/></svg></button>
+    <button id="close" class="x" title="关闭"><svg width="11" height="11" viewBox="0 0 11 11"><path d="M1 1l9 9M10 1l-9 9" stroke="currentColor" stroke-width="1.1"/></svg></button>
+  </div>
+</div>
+
+<div id="body">
+  <div class="ranges" id="ranges">
+    <button data-r="1h">1 小时</button>
+    <button data-r="24h">24 小时</button>
+    <button data-r="7d">7 天</button>
+  </div>
+
+  <div class="card hero">
+    <span class="chip" id="chip"><span class="d"></span><span id="chiptext">读取中</span></span>
+    <span class="pid" id="pid"></span>
+    <div class="val" id="val">—</div>
+    <div class="cap" id="cap">经代理的流量 · 消耗套餐</div>
+    <svg id="spark" viewBox="0 0 418 76" preserveAspectRatio="none">
+      <defs><linearGradient id="sg" x1="0" x2="0" y1="0" y2="1">
+        <stop offset="0" id="sg0"/><stop offset=".55" id="sgm"/>
+        <stop offset="1" id="sg1"/></linearGradient></defs>
+      <path id="sparkfill" fill="url(#sg)"/>
+      <path id="sparkline" fill="none" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    </svg>
+  </div>
+
+  <div class="tiles">
+    <div class="card tile"><div class="k">直连</div><div class="v" id="t-direct">—</div></div>
+    <div class="card tile"><div class="k">归因覆盖</div><div class="v" id="t-cov">—</div></div>
+    <div class="card tile"><div class="k">数据库</div><div class="v" id="t-db">—</div></div>
+  </div>
+
+  <button id="primary">读 取 中</button>
+
+  <div class="row">
+    <button class="ghost" id="b-dash"><svg viewBox="0 0 16 16"><rect x="2.25" y="2.75" width="11.5" height="10.5" rx="1.9"/><path d="M2.25 6.3h11.5M6.6 6.3v6.95"/></svg>看图表</button>
+    <button class="ghost" id="b-live"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="1.5" fill="currentColor" stroke="none"/><path d="M4.9 11.1a4.4 4.4 0 0 1 0-6.2"/><path d="M11.1 4.9a4.4 4.4 0 0 1 0 6.2"/><path d="M2.6 13.4a7.6 7.6 0 0 1 0-10.8"/><path d="M13.4 2.6a7.6 7.6 0 0 1 0 10.8"/></svg>实时</button>
+    <button class="ghost" id="b-report"><svg viewBox="0 0 16 16"><path d="M8 2.4v7.2"/><path d="M5.3 6.9 8 9.6l2.7-2.7"/><path d="M2.8 11.3v1.1a1.3 1.3 0 0 0 1.3 1.3h7.8a1.3 1.3 0 0 0 1.3-1.3v-1.1"/></svg>报告</button>
+  </div>
+
+  <div class="card list">
+    <h3 id="listtitle">近 24 小时消耗大户 <em id="listnote">套餐流量</em></h3>
+    <canvas id="pulse"></canvas>
+    <div id="sortbar">
+      <button data-s="bytes">流量</button>
+      <button data-s="process">进程</button>
+      <button data-s="host">域名</button>
+    </div>
+    <div id="items"></div>
+  </div>
+
+  <div id="note"></div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const SERIES = ['--s1','--s2','--s3','--s4','--s5'];
+const cssv = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+let live = false, busy = false, lastTheme = null;
+let range = '24h';
+let liveTimer = 0;
+let sortBy = 'bytes';
+const RANGE_LABEL = {'1h': '近 1 小时', '24h': '近 24 小时', '7d': '近 7 天'};
+
+function human(n){
+  let v = Math.abs(Number(n)||0), u = ['B','KB','MB','GB','TB'], i = 0;
+  while (v >= 1024 && i < u.length-1){ v /= 1024; i++; }
+  return (i === 0 ? v.toFixed(0) : v.toFixed(v >= 100 ? 0 : 2)) + ' ' + u[i];
+}
+function splitUnit(n){
+  let v = Math.abs(Number(n)||0), u = ['B','KB','MB','GB','TB'], i = 0;
+  while (v >= 1024 && i < u.length-1){ v /= 1024; i++; }
+  return [i === 0 ? v.toFixed(0) : v.toFixed(v >= 100 ? 0 : 2), u[i]];
+}
+
+function theme(name){
+  if (name === lastTheme) return;
+  lastTheme = name;
+  document.documentElement.dataset.theme = name;
+  const a = cssv('--accent');
+  $('sg0').setAttribute('stop-color', a); $('sg0').setAttribute('stop-opacity','.42');
+  $('sgm').setAttribute('stop-color', a); $('sgm').setAttribute('stop-opacity','.10');
+  $('sg1').setAttribute('stop-color', a); $('sg1').setAttribute('stop-opacity','0');
+  $('sparkline').setAttribute('stroke', a);
+}
+
+function drawSpark(values){
+  const PAD = 0, H = 76, W = 418, n = values.length;
+  if (!n){ $('sparkline').setAttribute('d',''); $('sparkfill').setAttribute('d',''); return; }
+  const peak = Math.max(...values, 1);
+  const pts = values.map((v,i) =>
+    [PAD + (n === 1 ? W : i*(W/(n-1))), H - 4 - (v/peak)*(H-12)]);
+  const d = pts.map((p,i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
+  $('sparkline').setAttribute('d', d);
+  $('sparkfill').setAttribute('d', d + ` L${PAD+W},${H} L${PAD},${H} Z`);
+}
+
+/* Colour follows the connection, never its row number: live rows reorder on
+   every sample, and indexing the palette by position would hand each process
+   a new colour a second later. */
+function connColor(row){
+  if (row.direct) return cssv('--dim');
+  const key = row.process + '|' + row.host;
+  let h = 2166136261;
+  for (let i = 0; i < key.length; i++){
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return cssv(SERIES[(h >>> 0) % SERIES.length]);
+}
+
+function sortRows(rows){
+  const by = sortBy;
+  return rows.slice().sort((a, b) =>
+    by === 'process' ? a.process.localeCompare(b.process)
+  : by === 'host'    ? a.host.localeCompare(b.host)
+  :                    b.bytes - a.bytes);
+}
+
+function renderItems(rows, unit){
+  const box = $('items');
+  if (!rows || !rows.length){
+    box.innerHTML = '<div class="none">暂无数据</div>';
+    return;
+  }
+  const peak = Math.max(...rows.map(r => r.bytes), 1);
+  box.innerHTML = sortRows(rows).map(r => `
+    <div class="item">
+      <div class="top">
+        <span class="dot" style="background:${connColor(r)}"></span>
+        <span class="proc">${esc(r.process)}</span>
+        <span class="host">${esc(r.host)}</span>
+        <span class="amt">${human(r.bytes)}${unit}</span>
+      </div>
+      <div class="track"><div class="fill" style="width:${Math.max(2, r.bytes/peak*100).toFixed(1)}%;
+        background:${connColor(r)}"></div></div>
+    </div>`).join('');
+}
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/* ---- live pulse strip -------------------------------------------------
+   Each sample injects one pulse. Its height tracks the rate at that moment
+   and its brightness decays to a dim trace over FADE, so the strip shows
+   recent history while the last couple of seconds stay lit. */
+const SLOTS = 46, FADE = 2000, FLOOR = 16 * 1024;
+const pulse = {samples: [], peak: FLOOR, raf: 0, canvas: null, ctx: null};
+
+function pulseSize(){
+  const c = pulse.canvas, dpr = window.devicePixelRatio || 1;
+  const w = c.clientWidth, h = c.clientHeight;
+  if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)){
+    c.width = Math.round(w * dpr);
+    c.height = Math.round(h * dpr);
+    pulse.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  return [w, h];
+}
+
+// Round the axis step so the gridlines land on readable rates rather than
+// on an arbitrary fraction of the peak.
+function niceStep(peak, want){
+  if (!(peak > 0)) return 1;
+  let unit = 1;
+  while (peak / unit >= 1024 && unit < Math.pow(1024, 4)) unit *= 1024;
+  const raw = peak / unit / want;
+  const pow = Math.pow(10, Math.floor(Math.log10(raw)));
+  const norm = raw / pow;
+  const mult = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10;
+  return mult * pow * unit;
+}
+
+function pulsePush(rate, tint){
+  pulse.samples.push({v: Math.max(0, rate), t: performance.now(), c: tint || null});
+  if (pulse.samples.length > SLOTS) pulse.samples.shift();
+  // The scale follows the traffic but relaxes back, so a one-off spike does
+  // not flatten everything after it for good.
+  const top = Math.max(...pulse.samples.map(s => s.v), 0);
+  pulse.peak = Math.max(top, pulse.peak * 0.94, FLOOR);
+}
+
+function pulseDraw(){
+  if (!live){ pulse.raf = 0; return; }
+  const [W, H] = pulseSize();
+  const ctx = pulse.ctx, now = performance.now();
+  const accent = cssv('--accent');
+  ctx.clearRect(0, 0, W, H);
+
+  const base = H - 14, span = H - 26;
+  const grid = cssv('--track'), ink = cssv('--muted');
+  ctx.lineWidth = 1;
+  ctx.font = '8px "Segoe UI"';
+
+  // rate axis -- the strip is useless without it; a bar could be 1 KB/s or 1 MB/s
+  const step = niceStep(pulse.peak, 2);
+  ctx.textAlign = 'left';
+  for (let k = 1; k * step <= pulse.peak * 1.001; k++){
+    const y = Math.round(base - (k * step / pulse.peak) * span) + 0.5;
+    if (y < 8) break;
+    ctx.strokeStyle = grid;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    ctx.fillStyle = ink;
+    ctx.fillText(human(k * step) + '/s', 1, y - 2.5);
+  }
+
+  // time axis, one mark every ten samples
+  const stepX = W / (SLOTS - 1);
+  ctx.textAlign = 'center';
+  for (let k = 10; k < SLOTS; k += 10){
+    const x = Math.round(W - k * stepX) + 0.5;
+    if (x < 12) break;
+    ctx.strokeStyle = grid;
+    ctx.beginPath(); ctx.moveTo(x, 4); ctx.lineTo(x, base); ctx.stroke();
+    ctx.fillStyle = ink;
+    ctx.fillText('-' + k + 's', x, H - 4);
+  }
+
+  ctx.strokeStyle = cssv('--line');
+  ctx.beginPath(); ctx.moveTo(0, base + 0.5); ctx.lineTo(W, base + 0.5); ctx.stroke();
+
+  const n = pulse.samples.length;
+  if (!n){ pulse.raf = requestAnimationFrame(pulseDraw); return; }
+
+  for (let i = 0; i < n; i++){
+    const smp = pulse.samples[i];
+    const x = W - (n - 1 - i) * stepX;
+    if (x < -4) continue;
+    const hot = Math.max(0, 1 - (now - smp.t) / FADE);
+    const amp = Math.min(1, smp.v / pulse.peak);
+    const h = Math.max(amp > 0 ? 2 : 0, amp * span * (0.55 + 0.45 * hot));
+    const tone = smp.c || accent;
+    ctx.globalAlpha = 0.2 + 0.8 * hot;
+    ctx.fillStyle = tone;
+    ctx.shadowColor = tone;
+    ctx.shadowBlur = 14 * hot * amp;
+    const w = 3;
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(x - w / 2, base - h, w, h, 1.5);
+    else ctx.rect(x - w / 2, base - h, w, h);
+    ctx.fill();
+    if (i === n - 1 && amp > 0.02){
+      ctx.globalAlpha = 0.25 + 0.75 * hot;
+      ctx.beginPath();
+      ctx.arc(x, base - h, 2.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+  pulse.raf = requestAnimationFrame(pulseDraw);
+}
+
+function pulseStart(){
+  if (!pulse.canvas){
+    pulse.canvas = $('pulse');
+    pulse.ctx = pulse.canvas.getContext('2d');
+  }
+  pulse.samples = [];
+  pulse.peak = FLOOR;
+  if (!pulse.raf) pulse.raf = requestAnimationFrame(pulseDraw);
+}
+
+function pulseStop(){
+  if (pulse.raf){ cancelAnimationFrame(pulse.raf); pulse.raf = 0; }
+  if (pulse.ctx){
+    const [W, H] = pulseSize();
+    pulse.ctx.clearRect(0, 0, W, H);
+  }
+}
+
+function renderDelta(d){
+  const el = $('delta');
+  if (d === null || d === undefined){ el.textContent = ''; el.className = 'delta'; return; }
+  const flat = Math.abs(d) < 1;
+  el.className = 'delta ' + (flat ? 'flat' : d > 0 ? 'up' : 'down');
+  el.innerHTML = (flat ? '持平' : (d > 0 ? '↑' : '↓') + Math.abs(d).toFixed(0) + '%')
+               + '<span class="vs">比上期</span>';
+  el.title = '对比紧邻的上一个等长周期';
+}
+
+function paint(s){
+  theme(s.theme);
+  $('chip').className = 'chip' + (s.recording ? ' on' : '');
+  $('chiptext').textContent = s.recording ? '记录中' : '未记录';
+  $('pid').textContent = s.recording ? 'pid ' + s.pid : (s.db ? '已停' : '');
+  const [v,u] = splitUnit(s.proxied);
+  $('val').innerHTML = v + '<small> ' + u + '</small><span class="delta" id="delta"></span>';
+  renderDelta(s.delta);
+  $('cap').textContent = RANGE_LABEL[s.range] + '经代理的流量 · 消耗套餐';
+  if (!live) $('listtitle').innerHTML =
+    RANGE_LABEL[s.range] + '消耗大户 <em id="listnote">套餐流量</em>';
+  $('t-direct').textContent = human(s.direct);
+  $('t-cov').textContent = s.coverage == null ? '—' : s.coverage.toFixed(1) + '%';
+  $('t-db').textContent = s.db ? human(s.db) : '—';
+  drawSpark(s.spark || []);
+  $('primary').textContent = s.recording ? '停 止 记 录' : '开 始 记 录';
+  $('primary').className = s.recording ? 'stop' : '';
+  $('primary').disabled = busy;
+  if (!live) renderItems(s.top, '');
+}
+
+async function refresh(){
+  try{ paint(await pywebview.api.state(range)); }
+  catch(e){ $('note').textContent = String(e && e.message ? e.message : e); }
+}
+
+async function tickLive(){
+  if (!live) return;
+  try{
+    const r = await pywebview.api.live_sample();
+    $('listtitle').innerHTML = '实时 <em id="listnote">' + human(r.total) + '/s</em>';
+    pulsePush(r.total, r.rows && r.rows.length ? connColor(r.rows[0]) : null);
+    renderItems(r.rows, '/s');
+  }catch(e){}
+}
+
+function setBusy(on, msg){
+  busy = on;
+  $('primary').disabled = on;
+  for (const id of ['b-dash','b-report']) $(id).disabled = on;
+  if (msg !== undefined) $('note').textContent = msg;
+}
+
+$('primary').onclick = async () => {
+  setBusy(true, '正在处理…');
+  try{ $('note').textContent = (await pywebview.api.toggle()).message || ''; }
+  finally{ setBusy(false); await refresh(); }
+};
+$('b-dash').onclick = async () => {
+  setBusy(true, '正在生成图表…');
+  try{ $('note').textContent = (await pywebview.api.open_dashboard()).message; }
+  finally{ setBusy(false); }
+};
+$('b-report').onclick = async () => {
+  setBusy(true, '正在汇总…');
+  try{ $('note').textContent = (await pywebview.api.report()).message; }
+  finally{ setBusy(false); }
+};
+$('b-live').onclick = async () => {
+  live = !live;
+  $('b-live').classList.toggle('active', live);
+  if (live){
+    document.body.classList.add('live');
+    await pywebview.api.live_start();
+    pulseStart();
+    $('note').textContent = '实时采样中，每秒一次脉冲。';
+    tickLive();
+    liveTimer = setInterval(tickLive, 1000);
+  }
+  else {
+    clearInterval(liveTimer); liveTimer = 0;
+    document.body.classList.remove('live');
+    pulseStop();
+    await pywebview.api.live_stop();
+    $('listtitle').innerHTML =
+      RANGE_LABEL[range] + '消耗大户 <em id="listnote">套餐流量</em>';
+    $('note').textContent = '';
+    refresh();
+  }
+};
+
+document.querySelectorAll('#ranges button').forEach(b => {
+  b.setAttribute('aria-pressed', b.dataset.r === range);
+  b.onclick = () => {
+    range = b.dataset.r;
+    document.querySelectorAll('#ranges button').forEach(
+      o => o.setAttribute('aria-pressed', o === b));
+    refresh();
+  };
+});
+
+document.querySelectorAll('#sortbar button').forEach(b => {
+  b.setAttribute('aria-pressed', b.dataset.s === sortBy);
+  b.onclick = () => {
+    sortBy = b.dataset.s;
+    document.querySelectorAll('#sortbar button').forEach(
+      o => o.setAttribute('aria-pressed', o === b));
+    if (live) tickLive(); else refresh();
+  };
+});
+
+$('min').onclick = () => pywebview.api.win('min');
+$('max').onclick = () => pywebview.api.win('max');
+$('close').onclick = () => pywebview.api.win('close');
+
+// The bridge can finish injecting before this script attaches its listener,
+// in which case the ready event is never observed. Probe for it as well so
+// start-up does not depend on winning that race.
+let started = false;
+function boot(){
+  if (started) return;
+  if (!(window.pywebview && window.pywebview.api && window.pywebview.api.state)) return;
+  started = true;
+  refresh();
+  setInterval(() => { if (!live) refresh(); }, 2000);
+}
+window.addEventListener('pywebviewready', boot);
+const probe = setInterval(() => { boot(); if (started) clearInterval(probe); }, 150);
+boot();
+</script>
+</html>
