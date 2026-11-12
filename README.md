@@ -107,6 +107,7 @@ Useful flags:
 
 ```
 collect    --interval 1.0 --commit-every 15 --db PATH --api HOST:PORT --secret S --once
+           --keep-conn DAYS --keep-agg DAYS --prune
 live       --watch --interval 3 --limit 20 --threshold 1.0
 report     --since 24h --scope proxied|direct|all --limit 15 --host H --process P --json
 dashboard  --out PATH --open
@@ -125,6 +126,24 @@ A single SQLite file, `traffic.db`, next to the executable (WAL mode).
 `minute_agg` answers every aggregate question and stays small. `conn` is there
 for the "what exactly was that one transfer" case. `recon` is how the coverage
 figure above is derived rather than guessed.
+
+Of the three, only `conn` grows in proportion to activity: it keeps a row per
+connection carrying the full process path and policy chain, while `minute_agg`
+collapses a whole minute into one row per process and host. Retention has a
+separate window per table and both default to keeping everything, because
+discarding recorded history should be a decision rather than a side effect of
+running a newer build.
+
+```
+collect --keep-conn 60              trim while recording
+collect --keep-conn 60 --prune      trim an existing file now, then exit
+```
+
+The recorder started from the window carries `--keep-conn 90`; the value is
+`KEEP_CONN_DAYS` in `app.py`.
+
+A one-shot prune rebuilds the file afterwards, since deleted pages otherwise
+stay in it as free space and shrinking it is the point.
 
 The database is excluded from version control on purpose: it records every
 host the machine contacted, which is browsing history.

@@ -32,6 +32,11 @@ PID_FILE = os.path.join(paths.BASE, "collector.pid")
 # slow poll without reporting a live recorder as dead.
 HEARTBEAT_GRACE = 90
 
+# Age at which the recorder started from the window drops per-connection rows.
+# That table is the only one that grows with activity; minute_agg is kept in
+# full, since every chart and report reads from it and it stays small.
+KEEP_CONN_DAYS = 90
+
 CREATE_NO_WINDOW = 0x08000000
 DETACHED_PROCESS = 0x00000008
 STILL_ACTIVE = 259
@@ -84,7 +89,8 @@ def _self_command(*args):
 
 def start_collector():
     subprocess.Popen(
-        _self_command("collect", "--quiet", "--commit-every", "10"),
+        _self_command("collect", "--quiet", "--commit-every", "10",
+                      "--keep-conn", str(KEEP_CONN_DAYS)),
         cwd=paths.BASE, close_fds=True,
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         creationflags=CREATE_NO_WINDOW | DETACHED_PROCESS,

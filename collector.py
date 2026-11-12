@@ -26,6 +26,8 @@ Usage:
     python collector.py                     start collecting
     python collector.py --once              single poll, print and exit
     python collector.py --db D:/other.db --interval 2
+    python collector.py --keep-conn 60      start collecting, trim as it goes
+    python collector.py --keep-conn 60 --prune    trim now, report and exit
 """
 
 import argparse
@@ -43,6 +45,10 @@ from mihomo_api import DEFAULT_PIPE, ApiError, build_client, parse_ts
 LOCAL_OUTBOUNDS = {"DIRECT", "REJECT", "REJECT-DROP", "PASS", "COMPATIBLE", "BLACKHOLE"}
 
 UNKNOWN_PROCESS = "(unknown)"
+
+# Pruning touches rows no reader is looking at, so it is cheap to defer and
+# pointless to do often.
+PRUNE_EVERY = 3600
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -106,6 +112,39 @@ def open_db(path):
     db = sqlite3.connect(path, isolation_level=None)
     db.executescript(SCHEMA)
     return db
+
+
+# Of the three tables only conn grows in proportion to activity: minute_agg
+# collapses a minute into one row per process and host, and recon is one row
+# per minute, while conn keeps a row per connection carrying the full process
+# path and policy chain. Retention therefore has a separate window per table,
+# and both default to keeping everything -- discarding recorded history is a
+# decision to be made explicitly, not a side effect of running a newer build.
+def prune(db, keep_conn=0, keep_agg=0, now=None):
+    """Drop rows past their retention window; returns rows removed per table."""
+    now = time.time() if now is None else now
+    removed = {}
+    if keep_conn > 0:
+        cutoff = now - keep_conn * 86400
+        removed["conn"] = db.execute(
+            "DELETE FROM conn WHERE end_ts < ?", (cutoff,)).rowcount
+    if keep_agg > 0:
+        cutoff = int((now - keep_agg * 86400) // 60 * 60)
+        removed["minute_agg"] = db.execute(
+            "DELETE FROM minute_agg WHERE minute_ts < ?", (cutoff,)).rowcount
+        removed["recon"] = db.execute(
+            "DELETE FROM recon WHERE minute_ts < ?", (cutoff,)).rowcount
+    return dict((table, n) for table, n in removed.items() if n > 0)
+
+
+def db_bytes(path):
+    total = 0
+    for suffix in ("", "-wal", "-shm"):
+        try:
+            total += os.path.getsize(path + suffix)
+        except OSError:
+            pass
+    return total
 
 
 def describe(conn):
@@ -342,6 +381,38 @@ def human(n):
         value /= 1024
 
 
+def run_prune(args):
+    """Apply the retention windows to an existing database and reclaim space."""
+    if not os.path.exists(args.db):
+        print("no database at %s" % os.path.abspath(args.db), file=sys.stderr)
+        return 1
+    if args.keep_conn <= 0 and args.keep_agg <= 0:
+        print("nothing to do: pass --keep-conn and/or --keep-agg with a day count",
+              file=sys.stderr)
+        return 2
+
+    before = db_bytes(args.db)
+    db = open_db(args.db)
+    try:
+        removed = prune(db, args.keep_conn, args.keep_agg)
+        if removed:
+            # Deleted pages stay in the file as free space until a rebuild,
+            # and shrinking the file is the whole point of running this.
+            db.execute("VACUUM")
+    finally:
+        db.close()
+    after = db_bytes(args.db)
+
+    if not removed:
+        print("already within the retention windows, nothing removed")
+        return 0
+    for table in ("conn", "minute_agg", "recon"):
+        if table in removed:
+            print("  %-11s %9d rows removed" % (table, removed[table]))
+    print("  %-11s %9s -> %s" % ("database", human(before), human(after)))
+    return 0
+
+
 def run_once(client):
     data = client.get_json("/connections")
     conns = data.get("connections") or []
@@ -375,9 +446,18 @@ def main(argv=None):
     parser.add_argument("--secret", help="external-controller secret")
     parser.add_argument("--interval", type=float, default=1.0, help="seconds between polls")
     parser.add_argument("--commit-every", type=float, default=15.0, help="seconds between DB writes")
+    parser.add_argument("--keep-conn", type=float, default=0, metavar="DAYS",
+                        help="drop per-connection rows older than this (0 keeps all)")
+    parser.add_argument("--keep-agg", type=float, default=0, metavar="DAYS",
+                        help="drop per-minute rows older than this (0 keeps all)")
+    parser.add_argument("--prune", action="store_true",
+                        help="apply the retention windows once, then exit")
     parser.add_argument("--once", action="store_true", help="print one snapshot and exit")
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(argv)
+
+    if args.prune:
+        return run_prune(args)
 
     client = build_client(args)
 
@@ -419,6 +499,8 @@ def main(argv=None):
         fh.write(str(os.getpid()))
 
     last_commit = time.time()
+    last_prune = time.time()
+    prunes = args.keep_conn > 0 or args.keep_agg > 0
     errors = 0
     while not stopping["flag"]:
         if os.path.exists(stop_path):
@@ -449,6 +531,17 @@ def main(argv=None):
             if not args.quiet:
                 print("\r%s  live=%-4d polls=%-7d" % (
                     time.strftime("%H:%M:%S"), live, collector.polls), end="", flush=True)
+
+        if prunes and now - last_prune >= PRUNE_EVERY:
+            last_prune = now
+            try:
+                removed = prune(collector.db, args.keep_conn, args.keep_agg)
+                if removed and not args.quiet:
+                    print()
+                    print("pruned %s" % ", ".join(
+                        "%s %d" % (t, n) for t, n in sorted(removed.items())))
+            except sqlite3.Error as exc:
+                print("prune failed: %s" % exc, file=sys.stderr)
 
         delay = args.interval - (time.time() - started)
         if delay > 0:
