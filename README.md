@@ -31,8 +31,13 @@ client, so a recorder has to be running to see anything at all.
 * Every minute the collector also stores what it attributed next to the
   core's own `uploadTotal` / `downloadTotal`. Bytes that move between the last
   poll and a connection closing cannot be observed, so the gap between the two
-  numbers is a *measured* blind spot instead of an assumption. On this setup
-  coverage lands between 94% and 99%.
+  numbers is a *measured* blind spot instead of an assumption. Across
+  eighteen days of uninterrupted recording here the figure stayed between
+  95% and 99.7%, with a median of 98.9%. It only means anything over a
+  window long enough to dwarf a restart: the collector takes its baseline
+  from the core counters when it starts, so whatever was already in flight
+  at that moment is never attributed, and in a short window carrying little
+  traffic that one gap alone can drag the ratio into the eighties.
 
 Client-side byte counts will never match a provider's billing page exactly:
 TLS and protocol overhead are counted differently, and nodes sold with a
