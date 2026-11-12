@@ -21,6 +21,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+import traceback
 from contextlib import redirect_stdout, redirect_stderr
 from tkinter import font as tkfont
 
@@ -421,11 +422,36 @@ def run_gui():
 
 
 def _attach_console():
-    """A windowed build has no console; borrow the caller's when there is one."""
+    """A windowed build is handed no streams; wire up whatever the caller left.
+
+    Two cases, and they want opposite encodings. Redirected to a pipe or a
+    file, Python would encode in the system ANSI code page, which no reader
+    assumes any more, so those streams are moved to UTF-8. Attached to a real
+    console, output has to match that console's own code page instead;
+    switching the console to UTF-8 would outlive this process and garble
+    whatever the caller prints next.
+    """
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name, None)
+        if stream is None:
+            continue
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+    missing = [n for n in ("stdout", "stderr") if getattr(sys, n, None) is None]
+    if not missing:
+        return
     try:
-        if ctypes.windll.kernel32.AttachConsole(-1):
-            sys.stdout = open("CONOUT$", "w", buffering=1, encoding="utf-8", errors="replace")
-            sys.stderr = open("CONOUT$", "w", buffering=1, encoding="utf-8", errors="replace")
+        kernel = ctypes.windll.kernel32
+        if not kernel.AttachConsole(-1):
+            return
+        codepage = kernel.GetConsoleOutputCP()
+        encoding = "cp%d" % codepage if codepage else "utf-8"
+        for name in missing:
+            setattr(sys, name, open("CONOUT$", "w", buffering=1,
+                                    encoding=encoding, errors="replace"))
     except Exception:
         pass
 
@@ -475,5 +501,23 @@ def main(argv=None):
     return status.main()
 
 
+def _run():
+    """Report a failure on a stream instead of letting it escape.
+
+    A windowed build has no console of its own, so the bootloader answers an
+    escaping exception with a modal dialog and then waits for someone to
+    dismiss it. Run as a command line tool that nobody is watching, the
+    process would sit there forever with its traceback already written.
+    """
+    try:
+        return main()
+    except KeyboardInterrupt:
+        return 130
+    except Exception:
+        _attach_console()
+        traceback.print_exc()
+        return 1
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(_run())
